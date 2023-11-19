@@ -3,4 +3,23 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
+remappings = [
+    "ds-test/=lib/forge-std/lib/ds-test/src/",
+    "forge-std/=lib/forge-std/src/",
+    "@openzeppelin/=lib/openzeppelin-contracts/contracts/",
+    "@solmate-utils/=lib/solmate/src/utils/",
+]
+
+# [dependencies]
+# OpenZeppelin = { git = "https://github.com/OpenZeppelin/openzeppelin-contracts.git", tag = "v4.7.3" }
+
+
+[rpc_endpoints]
+fuji = "${AVALANCHE_FUJI_URL}"
+
+[etherscan]
+snowtrace = { key = "${SNOWTRACE_API}" }
+
+
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
