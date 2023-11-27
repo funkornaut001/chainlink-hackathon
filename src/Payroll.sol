@@ -2,9 +2,13 @@
 pragma solidity 0.8.19;
 
 // imports
-import {Ownable} from "@openzeppelin/access/Ownable.sol";
-import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
- /**
+import {Ownable} from "lib/openzeppelin-contracts/contracts/access/Ownable.sol";
+//"@openzeppelin/access/Ownable.sol"; -- changed to slither
+import {IERC20} from "lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+//"@openzeppelin/token/ERC20/IERC20.sol"; -- changed to slither
+import {ITokenTransferor} from "./interfaces/ITokenTransferor.sol";
+
+/**
      * @author Funkornaut
      * @notice This is a simple payroll contract that allows the owner to add employees and pay them.
      * Employees are able to select which evm chain & tokens they wish to be paid on.
@@ -17,10 +21,6 @@ import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 /// bnm token address 0xD21341536c5cF5EB1bcb58f6723cE26e8D8E90e4 -- avax
 // 0x9768818565ED5968fAACC6F66ca02CBf2785dB84 -- trev addy 'employee'
 // new payroll 0xd492948950A3ed53A90c07918877C370a963bcAe
-interface ICCIPTokenSender {
-    function transferTokens(uint64 _destinationChainSelector, address _receiver, address _token, uint256 _amount) external returns (bytes32);
-    // ... other necessary functions
-}
 
 contract Payroll is Ownable {
 
@@ -34,12 +34,16 @@ error EmployeeDoesNotExists();
 error EmployeeIsNotSalary();
 error EmployeeIsNotHourly();
 error HoursWorkedArrayDoesNotMatchEmployees(uint8[]);
-
+error OwnerCantBeEmployee();
+error MustHavePayRate();
 // interfaces, libraries, contracts
 
 ///@dev Burn And Mint Test Token assume this is the stablecoin the Employer has choosen to pay its Employees in 
 IERC20 public bnmToken;
-ICCIPTokenSender public ccip;
+//ICCIPTokenSender public ccip;
+ITokenTransferor public ccip;
+// Automation Address
+address public automationAddress;
 
 // Type declarations
 
@@ -60,47 +64,72 @@ ICCIPTokenSender public ccip;
     // Base Goreli
     uint64 public immutable i_destinationChainIdBase = 5790810961207155433;
 
-    struct Employee {
-        // Primary wallet address of the employee, could be used on any chain, is updateable by employee or employeer
-        address primaryWallet; 
+    struct Employee { 
         // Unique identifier for the employee - hash of the originally assigned wallet and block.timestamp
         bytes32 employeeId;
+        // Primary wallet address of the employee, could be used on any chain, is updateable by employee or employeer
+        address primaryWallet;
         bool isSalary;
-        bool localChainPayment;
+        //bool localChainPayment;
         uint256 payRate;
         // the split information for each chain
         PaymentSplit paymentSplits; 
     }
 
-    ///@dev Mapping of primary wallet to Employee struct
+    ///@dev Mapping of employeeId to Employee struct
+    mapping (bytes32 => Employee) public employeeIds;
+
+    ///@dev mapping of employee primary address to Employee struct
     mapping (address => Employee) public employees;
 
     struct PaymentSplit {
         // The percentage of pay to be sent to those chains
-        uint8 paySplitPercentageEth; 
-        uint8 paySplitPercentageOp; 
+        uint8 paySplitPercentageNative;
+        uint8 paySplitPercentage1; //ETH
+        uint8 paySplitPercentage2; //OP 
         //uint8 paySplitPercentageAvax; 
         //uint8 paySplitPercentageArb; 
-        uint8 paySplitPercentagePolygon; 
-        uint8 paySplitPercentageBnb; 
-        uint8 paySplitPercentageBase; 
+        uint8 paySplitPercentage3; //Polygon 
+        uint8 paySplitPercentage4; //BNB 
+        uint8 paySplitPercentage5; //Base 
     }
 
     // mapping of employeeId to PaymentSplit struct -- might not be necessary
     mapping (bytes32 => PaymentSplit) public paymentSplits;
 
     // array of all employees addresses
-    address[] public allEmployees;
+    // address[] public allEmployees;
+
     // array of all salaried employees
     address[] public salariedEmployees;
+    // mapping of address to index in salariedEmployees array
+    mapping (address => uint256) public salariedEmployeeIndex;
+    
     // array of all hourly employees
     address[] public hourlyEmployees;
 
-    // Events
+    // mapping of address to index in hourlyEmployees array
+    mapping (address => uint256) public hourlyEmployeeIndex;
+    
+    //////////////
+    /// Events ///
+    //////////////
+    //@todo do we need parameters/vales?
+    event SingleEmployeePaid(address _employeeAddress, uint256 _amount);
+    event BalanceWithdrawn(uint256 amount);
+    event AllSallaryEmployeesPaid();
+    event AllHourlyEmployeesPaid();
+    event AllEmployeesPaid();
+    event EmployeeAdded(address _employeeAddress);
+    event SalarySet(address _employeeAddress);
+    event EmployeeFired(address _employeeAddress);
+    event WalletAddressChanged(address _oldAddress, address _newAddress);
+    event PaymentSplitSet(address _employeeAddress, uint8[6] _paySplitPercentages);
+    event TransferToChain(address _receiver, uint64 _destinationChainSelector, bytes32 messageId);
 
-    event EmployeePaid(address indexed _employeeAddress, uint256 _amount);
-
-// Modifiers
+    /////////////////
+    /// Modifiers ///
+    /////////////////
     modifier onlyEmployee() {
         require(employees[msg.sender].employeeId != 0, "Only employees can call this function");
         _;
@@ -111,20 +140,41 @@ ICCIPTokenSender public ccip;
         _;
     }
 
+    modifier onlyAutomationOrOwner() {
+        require(msg.sender == automationAddress || msg.sender == owner(), "Only automation or owner can call this function");
+        _;
+    }
 // Functions
 
 // Layout of Functions:
 // constructor
-    // might want to set the destinationChainIds in the constructor?
-    // maybe make a constructor params struct that can set all chainIds, CCIPcontract, token whitelist?
-    constructor(address _ccipTokenSender, address _bnmToken) {
-        ccip = ICCIPTokenSender(_ccipTokenSender);
+    // @todo might want to set the destinationChainIds in the constructor?
+    // @todo maybe make a constructor params struct that can set all chainIds, CCIPcontract, token whitelist?
+    constructor(address _ccipTokenTranferor, address _bnmToken) {
+        ccip = ITokenTransferor(_ccipTokenTranferor);
         bnmToken = IERC20(_bnmToken);
     }
 
 // receive function (if exists)
 // fallback function (if exists)
     function recieve() external payable {}
+
+    ///@dev withdraw function incase any ether/native token is sent to contract mistakenly
+    function withdraw(address payable _to) external onlyOwner {
+        if (_to == address(0)) {
+            revert InvalidAddress();
+        }
+        uint256 amount = address(this).balance;
+        (bool sent, ) = _to.call{value: amount}("");
+        require(sent, "Failed to send Ether");
+
+        emit BalanceWithdrawn(amount);
+    }
+
+    function transferOwnership(address newOwner) public override onlyOwner {
+        require(newOwner != address(0), "Ownable: new owner is the zero address");
+        _transferOwnership(newOwner);
+    }
 
 
 // external
@@ -135,6 +185,7 @@ ICCIPTokenSender public ccip;
 // external & public view & pure functions
 
     /// TOKEN SENDING WORKING WITH THIS LOGIC
+    /// THIS WAS KIND OF A TESTING FUNCTION SHOULD REMOVE FOR DEPLOYMENT
     /// @notice Payment function
     /// @dev This function will pay all employees on the payroll
     /// @dev only callable by the owner or automation contract
@@ -145,110 +196,145 @@ ICCIPTokenSender public ccip;
         bool success = bnmToken.transfer(address(ccip), _amount);
         require(success, "Token transfer failed");
 
-        messageId = ccip.transferTokens(_destinationChainSelector, _employeeAddress, _token, _amount);
+        messageId = ccip.transferTokensPayNative(_destinationChainSelector, _employeeAddress, _token, _amount);
 
     }
     
-    function payEmployee(address _employeeAddress, uint8 _hoursWorked) external  {
+    function paySingleEmployee(address _employeeAddress, uint8 _hoursWorked) external onlyAutomationOrOwner {
         //"Invalid address"
         if (_employeeAddress == address(0)) {
             revert InvalidAddress();
         }
-        //@todo can this be memory?
-        Employee storage employee = employees[_employeeAddress];
 
         //"Employee does not exist"
         if (employees[_employeeAddress].employeeId == 0) {
             revert EmployeeDoesNotExists();
         }
 
+        //@todo can this be memory?
+        //Employee memory employee = employees[_employeeAddress];
+
         uint256 weeklyPay = employees[_employeeAddress].isSalary 
             ? _calculateWeeklyPaymentSalary(_employeeAddress) 
             : _calculateWeeklyPaymentHourly(_employeeAddress, _hoursWorked);
 
-        if (employee.localChainPayment == true) {
-            bool success = bnmToken.transfer(_employeeAddress, weeklyPay);
-            require(success, "Token transfer failed");
-        }
-
         PaymentSplit memory splits = employees[_employeeAddress].paymentSplits;
         
-
         // Transfer tokens to each chain according to the payment split
-        _transferToChain(i_destinationChainIdEth, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageEth) / 100));
-        _transferToChain(i_destinationChainIDdOP, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageOp) / 100));
-        //_transferToChain(i_destinationChainIdAvax, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageAvax) / 100));
-       // _transferToChain(i_destinationChainIdArb, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageArb) / 100));
-        _transferToChain(i_destinationChainIdPolygon, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentagePolygon) / 100));
-        _transferToChain(i_destinationChainIdBnb, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageBnb) / 100));
-        _transferToChain(i_destinationChainIdBase, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageBase) / 100));
-
-
+                if (splits.paySplitPercentageNative != 0) {
+                    bool success = bnmToken.transfer(_employeeAddress, ((weeklyPay * splits.paySplitPercentageNative) / 100));
+                    require(success, "Token transfer failed");
+                }
+                if (splits.paySplitPercentage1 != 0) {
+                    _transferToChain(i_destinationChainIdEth, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage1) / 100));
+                }
+                if (splits.paySplitPercentage2 != 0) {
+                    _transferToChain(i_destinationChainIDdOP, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage2) / 100));
+                }
+                if (splits.paySplitPercentage3 != 0) {
+                    _transferToChain(i_destinationChainIdPolygon, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage3) / 100));
+                }
+                if (splits.paySplitPercentage4 != 0) {
+                    _transferToChain(i_destinationChainIdBnb, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage4) / 100));
+                }
+                if (splits.paySplitPercentage5 != 0) {
+                    _transferToChain(i_destinationChainIdBase, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage5) / 100));
+                }
         //ccip.transferTokens(, _employeeAddress, , weeklyPay)
         
-        emit EmployeePaid(_employeeAddress, weeklyPay);
+        emit SingleEmployeePaid(_employeeAddress, weeklyPay);
     }
 
-    function payAllSallaryEmployees() public onlyOwner {
+    function payAllSallaryEmployees() public onlyAutomationOrOwner {
         for(uint i = 0; i < salariedEmployees.length; ++i) {
-        address employeeAddress = salariedEmployees[i];
 
-        uint256 weeklyPay = _calculateWeeklyPaymentSalary(employeeAddress);
+            address employeeAddress = salariedEmployees[i];
 
-        PaymentSplit memory splits = employees[employeeAddress].paymentSplits;
+            uint256 weeklyPay = _calculateWeeklyPaymentSalary(employeeAddress);
+
+            PaymentSplit memory splits = employees[employeeAddress].paymentSplits;
         
 
-        // Transfer tokens to each chain according to the payment split
-        _transferToChain(i_destinationChainIdEth, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageEth) / 100));
-        _transferToChain(i_destinationChainIDdOP, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageOp) / 100));
-        //_transferToChain(i_destinationChainIdAvax, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageAvax) / 100));
-        // _transferToChain(i_destinationChainIdArb, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageArb) / 100));
-        _transferToChain(i_destinationChainIdPolygon, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentagePolygon) / 100));
-        _transferToChain(i_destinationChainIdBnb, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageBnb) / 100));
-        _transferToChain(i_destinationChainIdBase, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageBase) / 100));
+                // Transfer tokens to each chain according to the payment split
+                if (splits.paySplitPercentageNative !=0) {
+                    bool success = bnmToken.transfer(employeeAddress, ((weeklyPay * splits.paySplitPercentageNative) / 100));
+                    require(success, "Token transfer failed");
+                }
+                if (splits.paySplitPercentage1 != 0) {
+                    _transferToChain(i_destinationChainIdEth, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage1) / 100));
+                }
+                if (splits.paySplitPercentage2 != 0) {
+                    _transferToChain(i_destinationChainIDdOP, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage2) / 100));
+                }
+                if (splits.paySplitPercentage3 != 0) {
+                    _transferToChain(i_destinationChainIdPolygon, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage3) / 100));
+                }
+                if (splits.paySplitPercentage4 != 0) {
+                    _transferToChain(i_destinationChainIdBnb, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage4) / 100));
+                }
+                if (splits.paySplitPercentage5 != 0) {
+                    _transferToChain(i_destinationChainIdBase, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage5) / 100));
+                }
 
         }
+
+        emit AllSallaryEmployeesPaid();
     }
 
-    function payAllHourlyEmployees(uint8[] calldata _hoursWorked) public onlyOwner {
+    function payAllHourlyEmployees(uint8[] calldata _hoursWorked) public onlyAutomationOrOwner {
         if (hourlyEmployees.length != _hoursWorked.length){
             revert HoursWorkedArrayDoesNotMatchEmployees(_hoursWorked);
         }
 
         for(uint i = 0; i < hourlyEmployees.length; ++i){
+
             address employeeAddress = hourlyEmployees[i];
-            
+                
             uint256 weeklyPay = _calculateWeeklyPaymentHourly(employeeAddress, _hoursWorked[i]);
 
             PaymentSplit memory splits = employees[employeeAddress].paymentSplits;
-        
-        // Transfer tokens to each chain according to the payment split
-        _transferToChain(i_destinationChainIdEth, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageEth) / 100));
-        _transferToChain(i_destinationChainIDdOP, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageOp) / 100));
-        //_transferToChain(i_destinationChainIdAvax, _employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageAvax) / 100));
-        // _transferToChain(i_destinationChainIdArb, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageArb) / 100));
-        _transferToChain(i_destinationChainIdPolygon, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentagePolygon) / 100));
-        _transferToChain(i_destinationChainIdBnb, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageBnb) / 100));
-        _transferToChain(i_destinationChainIdBase, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentageBase) / 100));
 
-
+                // Transfer tokens to each chain according to the payment split
+                if (splits.paySplitPercentageNative !=0) {
+                    bool success = bnmToken.transfer(employeeAddress, ((weeklyPay * splits.paySplitPercentageNative) / 100));
+                    require(success, "Token transfer failed");
+                }
+                if (splits.paySplitPercentage1 != 0) {
+                    _transferToChain(i_destinationChainIdEth, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage1) / 100));
+                }
+                if (splits.paySplitPercentage2 != 0) {
+                    _transferToChain(i_destinationChainIDdOP, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage2) / 100));
+                }
+                if (splits.paySplitPercentage3 != 0) {
+                    _transferToChain(i_destinationChainIdPolygon, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage3) / 100));
+                }
+                if (splits.paySplitPercentage4 != 0) {
+                    _transferToChain(i_destinationChainIdBnb, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage4) / 100));
+                }
+                if (splits.paySplitPercentage5 != 0) {
+                    _transferToChain(i_destinationChainIdBase, employeeAddress, address(bnmToken), ((weeklyPay * splits.paySplitPercentage5) / 100));
+                }
         }
+                
+        emit AllHourlyEmployeesPaid();
 
     }
 
-    function payAllEmployees(uint8[] calldata _hoursWorked) external onlyOwner {
+    function payAllEmployees(uint8[] calldata _hoursWorked) external onlyAutomationOrOwner {
         payAllSallaryEmployees();
         payAllHourlyEmployees(_hoursWorked);
+
+        emit AllEmployeesPaid();
     }
 
     function _transferToChain(uint64 _destinationChainSelector, address _receiver, address _token, uint256 _amount) internal returns (bytes32 messageId) {
-        // not sure I need this approval
         bnmToken.approve(address(ccip), _amount);
 
         bool success = bnmToken.transfer(address(ccip), _amount);
         require(success, "Token transfer failed");
         
-        messageId = ccip.transferTokens(_destinationChainSelector, _receiver, _token, _amount);
+        messageId = ccip.transferTokensPayNative(_destinationChainSelector, _receiver, _token, _amount);
+        emit TransferToChain(_receiver, _destinationChainSelector, messageId);
 
     }
 
@@ -269,6 +355,14 @@ ICCIPTokenSender public ccip;
             revert EmployeeAlreadyExists();
         }
 
+        if (_employeeAddress == owner()) {
+            revert OwnerCantBeEmployee();
+        }
+
+        if (_payRate == 0) {
+            revert MustHavePayRate();
+        }
+
         // Generate a unique ID for the new employee
         // Employee address has been created by Employer w/ account abstraction
         bytes32 employeeId = keccak256(abi.encodePacked(_employeeAddress, block.timestamp));
@@ -277,30 +371,40 @@ ICCIPTokenSender public ccip;
             employeeId: employeeId,
             primaryWallet: _employeeAddress,
             isSalary: _isSalary,
-            localChainPayment: true,
+            //localChainPayment: true,
             payRate: _payRate,
             paymentSplits: PaymentSplit({
-                paySplitPercentageEth: 0,
-                paySplitPercentageOp: 0, 
+                paySplitPercentageNative: 100,
+                paySplitPercentage1: 0,
+                paySplitPercentage2: 0, 
                 //paySplitPercentageAvax: 0, 
                 //paySplitPercentageArb: 0,
-                paySplitPercentagePolygon: 0, 
-                paySplitPercentageBnb: 0,
-                paySplitPercentageBase: 0
+                paySplitPercentage3: 0, 
+                paySplitPercentage4: 0,
+                paySplitPercentage5: 0
             })
         });
 
-        // update employees mapping
+        // update employees address mapping
         employees[_employeeAddress] = newEmployee;
+        // update employeeId mapping
+        employeeIds[employeeId] = newEmployee;
+        
         // update allEmployees array
-        allEmployees.push(_employeeAddress); 
-        // update salary/hourly array
-        if (_isSalary = true){
+        //allEmployees.push(_employeeAddress);
+
+        // update salary/hourly array and index mapping
+        if (_isSalary == true){
             salariedEmployees.push(_employeeAddress);
+            uint256 index = salariedEmployees.length - 1;
+            salariedEmployeeIndex[_employeeAddress] = index;
         } else {
             hourlyEmployees.push(_employeeAddress);
+            uint256 index = hourlyEmployees.length - 1;
+            hourlyEmployeeIndex[_employeeAddress] = index;
         }
 
+        emit EmployeeAdded(_employeeAddress);
     }
 
     ///@dev if employee _isSalary = true then _payRate is their annual salary. 
@@ -317,40 +421,87 @@ ICCIPTokenSender public ccip;
 
         employees[_employeeAddress].isSalary = _isSalary;
         employees[_employeeAddress].payRate = _payRate;
+
+        emit SalarySet(_employeeAddress);
     }
 
     function removeEmployee(address _employeeAddress) external onlyOwner {
         // might not be necessary
-        if (employees[_employeeAddress].employeeId != 0) {
+        if (employees[_employeeAddress].employeeId == 0) {
             revert EmployeeDoesNotExists();
         }
-        //@todo do I need to update the mapping or address to employee struct too?
-        delete employees[_employeeAddress];
-    }
 
-    //function updateEmployee(address _employee) external onlyOwner {}
+        Employee storage employee = employees[_employeeAddress];
+
+        if (employee.isSalary == true) {
+            uint256 index = salariedEmployeeIndex[_employeeAddress];
+            _removeFromArray(index, salariedEmployees);
+        } else {
+            uint256 index = hourlyEmployeeIndex[_employeeAddress];
+            _removeFromArray(index, hourlyEmployees);
+        }
+
+        //@todo do I need to update the mapping or address to employee struct too? see above
+        delete employees[_employeeAddress];
+
+        emit EmployeeFired(_employeeAddress);
+    }
 
     //////////////////////////////////////////////////////////
     /// Employee & Owner Only Emloyee Management Functions ///
     //////////////////////////////////////////////////////////
 
-    function changePrimaryWalletAddress(address _oldAddress, address _newAddress) public onlyEmployeeOrOwner {
-        Employee storage employee = employees[_oldAddress];
+    function changePrimaryWalletAddress(address _oldAddress, address _newAddress) public onlyEmployee {
+        //Employee storage employee = employees[_oldAddress];
 
         //"Invalid address"
         if (_newAddress == address(0)) {
             revert InvalidAddress();
         }
-        //"Employee does not exist"
+        //"Employee does not exist" -- @todo don't think I need check because of onlyEmployee modifier
         if (employees[_oldAddress].employeeId == 0) {
             revert EmployeeDoesNotExists();
         }
+
+        // Copy to memory the employee
+        Employee memory updatedEmployee = employees[_oldAddress];
+
         //@todo might need to update the mapping as well or use the employeeId for the mapping key
-        employee.primaryWallet = _newAddress;   
+        updatedEmployee.primaryWallet = _newAddress; 
+        
+        if (employees[_oldAddress].isSalary == true) {
+            // remove old wallet from appropriate array
+            uint256 oldIndex = salariedEmployeeIndex[_oldAddress];
+            _removeFromArray(oldIndex, salariedEmployees);
+           
+            // add new wallet to appropriate array & update index mapping
+            salariedEmployees.push(_newAddress);
+            uint256 newIndex = salariedEmployees.length - 1;
+            salariedEmployeeIndex[_newAddress] = newIndex;
+        } else {
+            // remove old wallet from appropriate array
+            uint256 oldIndex = hourlyEmployeeIndex[_oldAddress];
+            _removeFromArray(oldIndex, hourlyEmployees);
+
+            // add new wallet to appropriate array & update index mapping
+            hourlyEmployees.push(_newAddress);
+            uint256 newIndex = hourlyEmployees.length - 1;
+            hourlyEmployeeIndex[_newAddress] = newIndex;
+        }                
+                
+        //delete old address mapping -- do I need to delete and re-add?
+        delete employees[_oldAddress];
+        
+        //update employee address mapping
+        employees[_newAddress] = updatedEmployee;
+
+
+        emit WalletAddressChanged(_oldAddress, _newAddress);
+
     }
 
     //@todo does _paySplit need to be callData?
-    function setPaymentSplits(address _employeeAddress, uint8[5] memory _paySplitPercentages) public onlyEmployeeOrOwner {
+    function setPaymentSplits(address _employeeAddress, uint8[6] calldata _paySplitPercentages) public onlyEmployeeOrOwner {
         //require(_paymentSplits.length <= 8, "Exceeds maximum split count");
         uint8 totalPercentage = 0;
         // if (_paymentSplits.paySplitPercentage1 + _paymentSplits.paySplitPercentage2 + _paymentSplits.paySplitPercentage3 + _paymentSplits.paySplitPercentage4 + _paymentSplits.paySplitPercentage5 + _paymentSplits.paySplitPercentage6 != 100) {
@@ -364,24 +515,44 @@ ICCIPTokenSender public ccip;
 
          PaymentSplit memory newSplit = PaymentSplit({
             //@todo get the chainIds out of this struct
-            paySplitPercentageEth: _paySplitPercentages[0],
-            paySplitPercentageOp: _paySplitPercentages[1],
+            paySplitPercentageNative: _paySplitPercentages[0],
+            paySplitPercentage1: _paySplitPercentages[1],
+            paySplitPercentage2: _paySplitPercentages[2],
             //paySplitPercentageAvax: _paySplitPercentages[2],
             //paySplitPercentageArb: _paySplitPercentages[2],
-            paySplitPercentagePolygon: _paySplitPercentages[2],
-            paySplitPercentageBnb: _paySplitPercentages[3],
-            paySplitPercentageBase: _paySplitPercentages[4]
+            paySplitPercentage3: _paySplitPercentages[3],
+            paySplitPercentage4: _paySplitPercentages[4],
+            paySplitPercentage5: _paySplitPercentages[5]
         });
         // can this be memory or callData?
         Employee storage employee = employees[_employeeAddress];
         employee.paymentSplits = newSplit;
-        employee.localChainPayment = false;
+        //employee.localChainPayment = false;
+
+        emit PaymentSplitSet(_employeeAddress, _paySplitPercentages);
+    }
+    
+    function setAutomationAddress(address _automationAddress) external onlyOwner {
+        automationAddress = _automationAddress;
+    }
+    ////////////////////
+    /// Helper Funcs ///
+    ////////////////////
+
+    function _removeFromArray(uint256 _index, address[] storage array) internal {
+       // function remove(uint index)  returns(uint[]) {
+        if (_index >= array.length) return;
+
+        for (uint i = _index; i<array.length-1; ++i){
+            array[i] = array[i+1];
+        }
+        
+        array.pop();
+        //return array;
     }
     
 
-    ///////////////////////////////////
-    /// VIEW & GETTER FUNCS
-    //////////////////////////////////
+
     function _calculateWeeklyPaymentSalary(address _employeeAddress) internal view returns (uint256 weeklyPay) {
         //@todo do I need to check if the employee is valid & exists
         //"Invalid address"
@@ -427,8 +598,31 @@ ICCIPTokenSender public ccip;
         // }
     }
 
+    ///////////////////////////////////
+    /// VIEW & GETTER FUNCS
+    //////////////////////////////////
     function viewPaymentSplit(address _employeeAddress) public view returns (PaymentSplit memory){
        return employees[_employeeAddress].paymentSplits;
+    }
+
+    function getEmployee(address _employeeAddress) public view returns (Employee memory){
+        return employees[_employeeAddress];
+    }
+
+    function getEmployeePaymentSplits(address _employeeAddress) public view returns (PaymentSplit memory){
+        return employees[_employeeAddress].paymentSplits;
+    }
+
+    function getHourlyEmployees() public view returns (address[] memory){
+        return hourlyEmployees;
+    }   
+
+    function getSalariedEmployees() public view returns (address[] memory){
+        return salariedEmployees;
+    }   
+
+    function getAutomationAddress() public view returns (address){
+        return automationAddress;
     }
 
 }

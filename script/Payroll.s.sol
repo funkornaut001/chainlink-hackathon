@@ -3,6 +3,8 @@ pragma solidity ^0.8.19;
 
 import {Script, console2} from "forge-std/Script.sol";
 import {Payroll} from "../src/Payroll.sol";
+import {TokenTransferor} from "../src/TokenTransferor.sol";
+import {ITokenTransferor} from "../src/interfaces/ITokenTransferor.sol";
 
 contract PayrollScript is Script {
     function setUp() public {}
