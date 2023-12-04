@@ -3,12 +3,12 @@ pragma solidity 0.8.19;
 
 import {Test, console2} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
-import {Payroll} from "../src/Payroll.sol";
+import {PayrollGas} from "../src/PayrollGas.sol";
 import {ERC20Mock} from "@openzeppelin/mocks/ERC20Mock.sol";
 import {TokenTransferor} from "../src/TokenTransferor.sol";
 
-contract PayRollTest is Test {
-    Payroll public payroll;
+contract PayRollGasTest is Test {
+    PayrollGas public payroll;
     ERC20Mock public mockBnMToken;
     //address public employeerAddress;
     TokenTransferor public ccip;
@@ -25,8 +25,7 @@ contract PayRollTest is Test {
     uint64 public immutable i_destinationChainIdBase = 5790810961207155433;
 
 
-    // uint256 fujiFork;
-    // string AVALANCHE_FUJI_URL = vm.envString("AVALANCHE_FUJI_URL");
+
 
     // add addressses
         address employee1 = vm.addr(1);
@@ -53,19 +52,64 @@ contract PayRollTest is Test {
 
 
     function setUp() public {
-        //fujiFork = vm.createFork(AVALANCHE_FUJI_URL);
 
-        //employeerAddress = 0x5a2B59bad54c7561C14755d70f8E6937e81857a5;
-        //ccip = TokenTransferor(payable(0x11972CaDC22a3CcD5508fAB98d9B22c2E1C34b41));
-       // ccip = new TokenTransferor();
         mockBnMToken = new ERC20Mock("BnMToken", "BnM", address(this), 18);
-        payroll = new Payroll(address(ccip), address(mockBnMToken));
+        payroll = new PayrollGas(address(ccip), address(mockBnMToken));
 
-        // vm.prank(0x11972CaDC22a3CcD5508fAB98d9B22c2E1C34b41);
-        // ccip.addToWhitelist(address(payroll));
-        // console2.log(ccip.owner());
-        // might want to mint tokens 
     }
+
+    ////////////////////////
+    /// Only Owner Funcs ///
+    ////////////////////////
+    
+    function testfuzz_onlyOwnerCanSetAutomationAddress(address caller) public {
+        vm.assume(caller != address(0) && caller != payroll.owner());
+
+        vm.prank(caller);
+        vm.expectRevert("Ownable: caller is not the owner");
+        payroll.setAutomationAddress(address(1));
+    }
+
+    function testfuzz_onlyOwnerCanRemoveEmployee(address caller) public {
+        vm.assume(caller != address(0) && caller != payroll.owner());
+
+        vm.prank(caller);
+        vm.expectRevert("Ownable: caller is not the owner");
+        payroll.removeEmployee(address(1));
+    }
+
+    function testfuzz_onlyOwnerCanSetEmployeeSalary(address caller) public {
+        vm.assume(caller != address(0) && caller != payroll.owner());
+
+        vm.prank(caller);
+        vm.expectRevert("Ownable: caller is not the owner");
+        payroll.setEmployeeSalary(address(1), true, 52);
+    }
+    function testfuzz_onlyOwnerCanAddEmployee(address caller) public {
+        vm.assume(caller != address(0) && caller != payroll.owner());
+
+        vm.prank(caller);
+        vm.expectRevert("Ownable: caller is not the owner");
+        payroll.addEmployee(address(1), true, 52);
+    }
+
+    function testfuzz_onlyOwnerCanTransferOwnership(address caller) public {
+        vm.assume(caller != address(0) && caller != payroll.owner());
+
+        vm.prank(caller);
+        vm.expectRevert("Ownable: caller is not the owner");
+        payroll.transferOwnership(address(1));
+    }
+
+    function testfuzz_onlyOwnerCanWithdraw(address caller) public {
+        vm.assume(caller != address(0) && caller != payroll.owner());
+
+        vm.prank(caller);
+        vm.expectRevert("Ownable: caller is not the owner");
+        payroll.withdraw(payable(msg.sender));
+    }
+
+
 
     ///////////////////////////////////
     /// Add / Update Employee Tests ///
@@ -74,22 +118,23 @@ contract PayRollTest is Test {
     function test_AddEmployee() public {
         payroll.addEmployee(employee1, true, 52000);
 
-        Payroll.Employee memory employee = payroll.getEmployee(employee1);
-        Payroll.PaymentSplit memory paymentSplits = payroll.getEmployeePaymentSplits(employee1);
+        PayrollGas.Employee memory employee = payroll.getEmployee(employee1);
+        PayrollGas.PaymentSplit memory paymentSplits = payroll.getEmployeePaymentSplits(employee1);
 
         assertEq(employee.employeeId, keccak256(abi.encodePacked(employee1, block.timestamp)));
         assertEq(employee.primaryWallet, employee1);
         assertEq(employee.isSalary, true);
+        assertEq(employee.weeklyPay, 1000);
        // assertEq(employee.localChainPayment, true);
         assertEq(employee.payRate, 52000);
         assertEq(paymentSplits.paySplitPercentageNative, 100);
     }
 
-    function test_canSetEmployeeSalary() public {
+     function test_canChangePayRate() public {
         payroll.addEmployee(employee1, true, 52000);
         payroll.setEmployeeSalary(employee1, true, 100000);
 
-        Payroll.Employee memory employee = payroll.getEmployee(employee1);
+        PayrollGas.Employee memory employee = payroll.getEmployee(employee1);
 
         assertEq(employee.payRate, 100000);
     }
@@ -98,7 +143,7 @@ contract PayRollTest is Test {
         payroll.addEmployee(employee1, true, 52000);
         payroll.setEmployeeSalary(employee1, false, 100000);
 
-        Payroll.Employee memory employee = payroll.getEmployee(employee1);
+        PayrollGas.Employee memory employee = payroll.getEmployee(employee1);
 
         assertEq(employee.isSalary, false);
     }
@@ -107,7 +152,7 @@ contract PayRollTest is Test {
         payroll.addEmployee(employee1, false, 52000);
         payroll.setEmployeeSalary(employee1, true, 100000);
 
-        Payroll.Employee memory employee = payroll.getEmployee(employee1);
+        PayrollGas.Employee memory employee = payroll.getEmployee(employee1);
 
         assertEq(employee.isSalary, true);
     }
@@ -117,7 +162,7 @@ contract PayRollTest is Test {
         payroll.addEmployee(employee1, true, 52000);
        
         // grab employee1 struct
-        Payroll.Employee memory employee = payroll.getEmployee(employee1);
+        PayrollGas.Employee memory employee = payroll.getEmployee(employee1);
         bytes32 idFromOldAddress = employee.employeeId;
 
         address newWallet = vm.addr(69);
@@ -126,13 +171,13 @@ contract PayRollTest is Test {
         payroll.changePrimaryWalletAddress(employee1, newWallet);
 
         // Fetch the updated employee record using the new wallet address
-        Payroll.Employee memory updatedEmployee = payroll.getEmployee(newWallet);
+        PayrollGas.Employee memory updatedEmployee = payroll.getEmployee(newWallet);
 
         assertEq(updatedEmployee.primaryWallet, newWallet, "Primary wallet address not updated correctly");
         assertEq(idFromOldAddress, updatedEmployee.employeeId);
 
         // Use the old wallet address to fetch the Employee struct - should be all 0 now.
-        Payroll.Employee memory oldEmployee = payroll.getEmployee(employee1);
+        PayrollGas.Employee memory oldEmployee = payroll.getEmployee(employee1);
 
         payroll.getEmployee(employee1);
         assertEq(oldEmployee.primaryWallet, address(0));
@@ -147,7 +192,7 @@ contract PayRollTest is Test {
         payroll.addEmployee(employee4, true, 52000);
         payroll.addEmployee(employee5, true, 52000);
         // grab employee1 struct
-        Payroll.Employee memory employee = payroll.getEmployee(employee1);
+        PayrollGas.Employee memory employee = payroll.getEmployee(employee1);
         bytes32 idFromOldAddress = employee.employeeId;
 
         address newWallet = vm.addr(69);
@@ -156,29 +201,29 @@ contract PayRollTest is Test {
         payroll.changePrimaryWalletAddress(employee1, newWallet);
 
         // Fetch the updated employee record using the new wallet address
-        Payroll.Employee memory updatedEmployee = payroll.getEmployee(newWallet);
+        PayrollGas.Employee memory updatedEmployee = payroll.getEmployee(newWallet);
 
         assertEq(updatedEmployee.primaryWallet, newWallet, "Primary wallet address not updated correctly");
         assertEq(idFromOldAddress, updatedEmployee.employeeId);
 
         // Use the old wallet address to fetch the Employee struct - should be all 0 now.
-        Payroll.Employee memory oldEmployee = payroll.getEmployee(employee1);
+        PayrollGas.Employee memory oldEmployee = payroll.getEmployee(employee1);
         assertEq(oldEmployee.primaryWallet, address(0));
 
     }
 
     function test_canChangePaymentSplits() public {
         payroll.addEmployee(employee1, true, 52000);
-        payroll.setPaymentSplits(employee1, [0,20,20,20,20,20]);
+        payroll.setPaymentSplits(employee1, [20,20,20,20,20]);
 
-        Payroll.PaymentSplit memory paymentSplits = payroll.getEmployeePaymentSplits(employee1);
+        PayrollGas.PaymentSplit memory paymentSplits = payroll.getEmployeePaymentSplits(employee1);
 
-        assertEq(paymentSplits.paySplitPercentageNative, 0);
+        assertEq(paymentSplits.paySplitPercentageNative, 20);
         assertEq(paymentSplits.paySplitPercentage1, 20);
         assertEq(paymentSplits.paySplitPercentage2, 20);
         assertEq(paymentSplits.paySplitPercentage3, 20);
         assertEq(paymentSplits.paySplitPercentage4, 20);
-        assertEq(paymentSplits.paySplitPercentage5, 20);
+        //assertEq(paymentSplits.paySplitPercentage5, 20);
         
     }
 
@@ -206,25 +251,25 @@ contract PayRollTest is Test {
     ///////////////////////////
     /// CCIP Contract Tests ///
     ///////////////////////////
-    function test_canAllowlistDestinationChain() public {
-        address owner = ccip.owner();
-        vm.prank(owner);
-        ccip.allowlistDestinationChain(i_destinationChainIdEth, true);
-        // 11/22 added to contract - wont work on current fork
-        assertEq(ccip.isChainIdAllowed(i_destinationChainIdEth), true);
-    }
-
-    function test_canDelistChainId() public {
-        //vm.stratPrank(employeerAddress);
-        ccip.allowlistDestinationChain(i_destinationChainIdEth, true);
-        assertEq(ccip.isChainIdAllowed(i_destinationChainIdEth), true);
-
-        ccip.allowlistDestinationChain(i_destinationChainIdEth, false);
-        assertEq(ccip.isChainIdAllowed(i_destinationChainIdEth), false);
-    }
-
-    // function testFuzz_SetNumber(uint256 x) public {
-    //     counter.setNumber(x);
-    //     assertEq(counter.number(), x);
+    //@note should fork test these
+    // function test_canAllowlistDestinationChain() public {
+    //     // address owner = ccip.owner();
+    //     // vm.prank(owner);
+    //     ccip.allowlistDestinationChain(i_destinationChainIdEth, true);
+    //     // 11/22 added to contract - wont work on current fork
+    //     assertEq(ccip.isChainIdAllowed(i_destinationChainIdEth), true);
     // }
+
+    // function test_canDelistChainId() public {
+    //     //vm.stratPrank(employeerAddress);
+    //     ccip.allowlistDestinationChain(i_destinationChainIdEth, true);
+    //     assertEq(ccip.isChainIdAllowed(i_destinationChainIdEth), true);
+
+    //     ccip.allowlistDestinationChain(i_destinationChainIdEth, false);
+    //     assertEq(ccip.isChainIdAllowed(i_destinationChainIdEth), false);
+    // }
+
 }
+
+
+    

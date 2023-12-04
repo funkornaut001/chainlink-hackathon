@@ -65,12 +65,12 @@ contract PayrollFactory is Ownable {
     receive() external payable {}
 
     // Function to withdraw collected fees
-    function withdrawFees(address payable beneficiary) public onlyOwner {
+    function withdrawFees(address payable _beneficiary) public onlyOwner {
         // Only contract owner should be able to withdraw fees
         // Implement ownership and access control
-        if (beneficiary == address(0)) {
+        if (_beneficiary == address(0)) {
             revert InvalidAddress();
         }
-        beneficiary.transfer(address(this).balance);
+        _beneficiary.transfer(address(this).balance);
     }
 }
