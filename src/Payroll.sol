@@ -625,4 +625,15 @@ address public automationAddress;
         return automationAddress;
     }
 
+    function doesEmployeeExist(address _employeeAddress) public view returns (bool){
+        if (employees[_employeeAddress].employeeId == 0) {
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    function getOwner() public view returns (address){
+        return owner();
+    }   
 }
