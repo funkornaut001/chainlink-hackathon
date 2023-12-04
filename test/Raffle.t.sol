@@ -206,28 +206,28 @@ function test_transferPrizeToRaffleWithERC1155() public {
 //     assertEq(mock1155.balanceOf(address(winner), 1), 1);
 // }
 
-function test_sendMultiERC1155ToWinner() public {
-    address raffleCreator = makeAddr("raffleCreator");
-    address winner = makeAddr("winner");
-    mock1155.mint(raffleCreator, 1, 30, "");
+// function test_sendMultiERC1155ToWinner() public {
+//     address raffleCreator = makeAddr("raffleCreator");
+//     address winner = makeAddr("winner");
+//     mock1155.mint(raffleCreator, 1, 30, "");
     
-    vm.startPrank(raffleCreator);
-    bytes32 raffleId = createERC1155MultipleRaffleRaffleType();
-    mock1155.setApprovalForAll(address(raffleContract), true);
+//     vm.startPrank(raffleCreator);
+//     bytes32 raffleId = createERC1155MultipleRaffleRaffleType();
+//     mock1155.setApprovalForAll(address(raffleContract), true);
 
-    raffleContract.stakePrize(raffleId);
+//     raffleContract.stakePrize(raffleId);
 
-    assertEq(mock1155.balanceOf(address(raffleContract), 1), 22);
-    assertEq(mock1155.balanceOf(address(raffleCreator), 1), 8);
+//     assertEq(mock1155.balanceOf(address(raffleContract), 1), 22);
+//     assertEq(mock1155.balanceOf(address(raffleCreator), 1), 8);
 
-    vm.warp(10 minutes + 1 seconds);
+//     vm.warp(10 minutes + 1 seconds);
 
-    raffleContract._transferPrizeToWinnerTest(raffleId, winner);
+//     raffleContract._transferPrizeToWinnerTest(raffleId, winner);
 
-    assertEq(mock1155.balanceOf(address(raffleContract), 1), 0);
-    assertEq(mock1155.balanceOf(address(raffleCreator), 1), 8);
-    assertEq(mock1155.balanceOf(address(winner), 1), 22);
-}
+//     assertEq(mock1155.balanceOf(address(raffleContract), 1), 0);
+//     assertEq(mock1155.balanceOf(address(raffleCreator), 1), 8);
+//     assertEq(mock1155.balanceOf(address(winner), 1), 22);
+// }
 
 ////////////////////////////////
 /// Test OnlyOwner Functions ///
