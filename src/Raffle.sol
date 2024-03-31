@@ -12,50 +12,28 @@ import {IERC721} from "@openzeppelin/token/ERC721/IERC721.sol";
 import {IERC20} from "@openzeppelin/token/ERC20/IERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/security/ReentrancyGuard.sol";
 
-
-
-// Layout of Contract:
-// version
-// imports
-// errors
-// interfaces, libraries, contracts
-// Type declarations
-// State variables
-// Events
-// Modifiers
-// Functions
-
-// Layout of Functions:
-// constructor
-// receive function (if exists)
-// fallback function (if exists)
-// external
-// public
-// internal
-// private
-// internal & private view & pure functions
-// external & public view & pure functions
 // current raffle contract live on testnet VRF & Automation working 0xEb1458F95C07aa91ABfc7A1Baf03080ff44FA350
 
 contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFConsumerBaseV2 {
     
-    ITokenTransferor public ccip;
-    //VRFCoordinatorV2Interface private immutable i_vrfCoordinator;
-
     //////////////
     /// ERRORS ///
     //////////////
-    error InvalidRaffle(bytes32 _raffleId);
-    error AlreadyEntered(address _usr);
-    error RaffleClosed();
-    error RaffleStillOpen();
-    error RandomNumberNotAvailable(bytes32 _raffleId);
-    error InvalidRaffleState(Status _status);
+
+    error Raffle__InvalidRaffle(bytes32 _raffleId);
+    error Raffle__AlreadyEntered(address _usr);
+    error Raffle__RaffleClosed();
+    error Raffle__RaffleStillOpen();
+    error Raffle__RandomNumberNotAvailable(bytes32 _raffleId);
+    error Raffle__InvalidRaffleState(Status _status);
+    error Raffle__InvalidEndTime();
+    error Raffle__InvalidGasLimit();
+
     //////////////
     /// EVENTS ///
     //////////////
 
-    event RequestSent(uint256 requestId, uint32 numWords);
+    event RequestSent(uint256 requestId);
     event AddedToRaffle(address usr, bytes32 raffleId);
     event RaffleCreated(bytes32 raffleId, uint256 endTime);
     event RaffleStarted(bytes32 raffleId);
@@ -67,13 +45,10 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
         uint256[] randomWords,
         bytes32 raffleId
     );
-    // array of address that have entered a raffle
-    address[] public entrantsArray;
-    bytes32[] public raffleIds;
 
-    //////////////
-    // Mappings //
-    //////////////
+    ////////////////////
+    // State Variable //
+    ////////////////////
 
     /// requestId --> requestStatus 
     mapping(uint256 => RequestStatus) public s_requests; 
@@ -93,10 +68,14 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
     /// mapping of raffle creator to their raffleIds
     mapping (bytes32 => address) public raffleCreator;
 
+    // array of address that have entered a raffle
+    address[] public entrantsArray;
+    bytes32[] public raffleIds;
+
     struct RaffleInfo {
         Status status;
         RaffleType raffleType;
-        bytes32 id; // uniqueId for each raffle
+        bytes32 id; // uniqueId for each raffle @todo test is using a uint would be cheaper / better / is it safer?
         uint256 endTime; // ending timestamp 
         uint256 randomNumber; // random number from VRF to pick winner from array
         address prize; // address of the raffle prize
@@ -135,8 +114,6 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
     /// VRF Variables ///
     /////////////////////
 
-    // past requests Id.
-    uint256[] public requestIds;
     uint256 public lastRequestId;
 
     VRFCoordinatorV2Interface private immutable i_vrfCoordinator;
@@ -157,13 +134,6 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
     /// Modifiers /// 
     /////////////////
 
-
-    // mumbai vrf info 
-    // 6612
-    // 0x4b09e658ed251bcafeebbc69400383d49f344ace09b9576fe248bb02c003fe9f gaslane
-    // 500000
-    // 0x7a1BaC17Ccc5b313516C5E16fb24f7659aA5ebed vrf
-
     constructor(uint64 subscriptionId, bytes32 gasLane, uint32 callbackGasLimit, address vrfCoordinatorV2)
             //address payable destinationWallet
             VRFConsumerBaseV2(vrfCoordinatorV2) {
@@ -175,9 +145,9 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
     
     receive() external payable {}
 
-    ///////////////////////////////////////
-    /// Withdraw Funcs For Stuck Tokens ///
-    ///////////////////////////////////////
+    ////////////////////////////////
+    /// Withdraw Funcs For Owner ///
+    ////////////////////////////////
 
     function withdrawEthFees(address _to) external onlyOwner {
         uint256 amount = address(this).balance;
@@ -227,7 +197,6 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
                 fulfilled: false
             });
 
-            requestIds.push(requestId);
             lastRequestId = requestId;
 
             uint256 numOfEntries = raffleEntrants[_raffleId].length - 1;
@@ -237,7 +206,7 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
                 id: _raffleId,
                 size: numOfEntries
             });
-            emit RequestSent(requestId, NUM_WORDS);
+            emit RequestSent(requestId);
             return requestId;
     }
 
@@ -271,9 +240,9 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
                 _randomWords,
                 chainlinkRaffleInfo[_requestId].id
             );   
+
         // call the winning function / send what was wone to winner
         endRaffle(raffleInfo.id);
-
     }
 
     //////////////////
@@ -282,7 +251,7 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
     /**
      * @dev This is the function that the Chainlink Keeper nodes call
      * they look for `upkeepNeeded` to return True.
-     * the following should be true for this to return true:
+     * the following should be true for this to return true: the raffle has ended
      */
     function checkUpkeep(bytes memory /* checkData */) public view override returns (bool upkeepNeeded, bytes memory performData){
         for (uint256 i = 0; i < raffleIds.length; i++) {
@@ -315,9 +284,16 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
         _requestRandomWords(raffleId);
     }
 
-    //@todo how to tackle access control? OnlyOwner or whitelist?
-    function createRaffle(RaffleType _raffleType, uint256 _endTime, address _prize, uint256 _prizeId, uint256 _prizeAmount, uint256 _entryFee) external onlyOwner returns (bytes32 raffleId) {
-        //@note how can I make ID more random?
+    ////////////////////
+    /// Raffle Funcs ///
+    ////////////////////
+
+    function createRaffle(RaffleType _raffleType, uint256 _endTime, address _prize, uint256 _prizeId, uint256 _prizeAmount, uint256 _entryFee) external returns (bytes32 raffleId) {
+        //@note how can I make ID more random? Can this just be a unit? Does it need to be random?
+        if (_endTime < block.timestamp + 1 hours) {
+            revert Raffle__InvalidEndTime();
+        }
+
         raffleId = keccak256(abi.encodePacked(block.timestamp, msg.sender));
 
         RaffleInfo memory newRaffle = RaffleInfo({
@@ -334,7 +310,6 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
             entryFee: _entryFee
         });
 
-        entrantsArray = raffleEntrants[raffleId];
         raffle[raffleId] = newRaffle;
         raffleIds.push(raffleId);
         
@@ -345,7 +320,8 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
 
     }
 
-    function stakePrize(bytes32 _raffleId) onlyOwner external {
+    //@todo make an only raffle starter modifier?
+    function stakePrize(bytes32 _raffleId) external {
         // handle approvals
         _transferPrizeToRaffle(_raffleId);
 
@@ -356,41 +332,51 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
 
     }
 
+    /**
+     * @dev Allows the owner to add a user to a raffle
+     * @param _usr The address of the user to add
+     * @param _raffleId The id of the raffle to add the user to
+     */
     function addToRaffle(address _usr, bytes32 _raffleId) external onlyOwner{
         RaffleInfo memory raffleInfo = raffle[_raffleId];
        
         if(raffleInfo.status != Status.STARTED) {
-            revert InvalidRaffle(_raffleId);
+            revert Raffle__InvalidRaffle(_raffleId);
         }
 
         if(block.timestamp >= raffleInfo.endTime){
-            revert RaffleClosed();
+            revert Raffle__RaffleClosed();
         }
         // check if _usr is in the raffle
         if(raffleEntryIndex[_raffleId][_usr] != 0) {
-            revert AlreadyEntered(_usr);
+            revert Raffle__AlreadyEntered(_usr);
         }
 
         // Add the user to the raffle
         raffleEntrants[_raffleId].push(_usr);
 
-        // Get the index of the newly added user
-        uint256 index = raffleEntrants[_raffleId].length - 1;
+        // Get the index of the newly added user  - use .length to accout for 0 index 
+        //@audit 0 index should never be used - invariant
+        uint256 index = raffleEntrants[_raffleId].length;
         raffleEntryIndex[_raffleId][_usr] = index;
 
         emit AddedToRaffle(_usr, _raffleId);
     }
 
+    /**
+     * @dev Allows a user to enter a raffle. 
+     * A user can only enter a raffle once
+     * @param _raffleId The id of the raffle to enter
+     */
     function enterRaffle(bytes32 _raffleId) external payable {
         RaffleInfo memory raffleInfo = raffle[_raffleId];
-        entrantsArray = raffleEntrants[_raffleId];
 
         if(raffleInfo.status != Status.STARTED) {
-            revert InvalidRaffle(_raffleId);
+            revert Raffle__InvalidRaffle(_raffleId);
         }
 
         if(block.timestamp >= raffleInfo.endTime){
-            revert RaffleClosed();
+            revert Raffle__RaffleClosed();
         }
 
         if(raffleInfo.entryFee > 0 && msg.value != raffleInfo.entryFee) {
@@ -399,51 +385,60 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
 
         // check if _usr is in the raffle
         if(raffleEntryIndex[_raffleId][msg.sender] != 0) {
-            revert AlreadyEntered(msg.sender);
+            revert Raffle__AlreadyEntered(msg.sender);
         }
 
-        entrantsArray.push(msg.sender);
-        // can I just do this?
-        //raffleEntryIndex[_usr] = entrants.length - 1;
-        uint256 index = entrantsArray.length - 1;
+
+
+        raffleEntrants[_raffleId].push(msg.sender);
+
+        // Get the index of the newly added user  - use .length to accout for 0 index 
+        uint256 index = raffleEntrants[_raffleId].length;
         raffleEntryIndex[_raffleId][msg.sender] = index;
 
         emit AddedToRaffle(msg.sender, _raffleId);
 
     }
 
-    // this func calls VRF to get a random number
-    function pickWinner(bytes32 _raffleId) public returns (uint256 requestId){
-        RaffleInfo memory raffleInfo = raffle[_raffleId];
-        //entrants = raffleEntrants[_raffleId];
+    /**
+     * @dev This func calls VRF to get a random number
+    //  */
+    // function pickWinner(bytes32 _raffleId) public returns (uint256 requestId){
+    //     RaffleInfo memory raffleInfo = raffle[_raffleId];
+    //     //entrants = raffleEntrants[_raffleId];
 
-        raffleInfo.status = Status.DRAWING;
-        // if(raffleInfo.status != Status.PENDING) {
-        //     revert InvalidRaffle(_raffleId);
-        // }
-        if(block.timestamp < raffleInfo.endTime){
-            revert RaffleStillOpen();
-        }
+    //     raffleInfo.status = Status.DRAWING;
+    //     // if(raffleInfo.status != Status.PENDING) {
+    //     //     revert InvalidRaffle(_raffleId);
+    //     // }
+    //     if(block.timestamp < raffleInfo.endTime){
+    //         revert Raffle__RaffleStillOpen();
+    //     }
 
-        requestId = _requestRandomWords(_raffleId);
-    }
+    //     requestId = _requestRandomWords(_raffleId);
+    // }
 
-    // this func is called by the VRF callback func to set the winner address
-    // should only be called by the VRF callback func
+
+    /**
+     * @dev Ends the raffle and picks a winner.
+     * This function should be called from the fulfillRandomWords callback function 
+     * @param _raffleId The id of the raffle to end
+     */
+    //@todo add access control
     function endRaffle(bytes32 _raffleId) public returns (address winner) {
         // memory or storage
         RaffleInfo storage raffleInfo = raffle[_raffleId];
         
         if(block.timestamp < raffleInfo.endTime){
-            revert RaffleStillOpen();
+            revert Raffle__RaffleStillOpen();
         }
 
         if(raffleInfo.randomNumberAvailable == false){
-            revert RandomNumberNotAvailable(_raffleId);
+            revert Raffle__RandomNumberNotAvailable(_raffleId);
         }
 
         if(raffleInfo.status != Status.DRAWING) {
-            revert InvalidRaffleState(raffleInfo.status);
+            revert Raffle__InvalidRaffleState(raffleInfo.status);
         }
 
         entrantsArray = raffleEntrants[_raffleId];
@@ -464,62 +459,35 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
     /// Helper funcs to move prizes in out of Raffle contract ///
     /////////////////////////////////////////////////////////////
 
-    //@note added _winner param & made public just for testing
-    // // // can just have _raffleId param & use raffleInfo.winner for the address in the transfer funcs
-    // function _transferPrizeToWinnerTest(bytes32 _raffleId, address _winner) public {
-    //     RaffleInfo memory raffleInfo = raffle[_raffleId];
-
-    // if(raffleInfo.raffleType == RaffleType.ERC1155 && raffleInfo.prizeAmount == 1) {
-    //         IERC1155(raffleInfo.prize).safeTransferFrom(address(this), raffleInfo.winner, raffleInfo.prizeId, raffleInfo.prizeAmount, "");
-    //     } else if(raffleInfo.raffleType == RaffleType.ERC1155 && raffleInfo.prizeAmount > 1) {
-    //             uint256[] memory ids = new uint256[](raffleInfo.prizeAmount);
-    //             uint256[] memory amounts = new uint256[](raffleInfo.prizeAmount);
-
-    //         for (uint256 i = 0; i < raffleInfo.prizeId; ++i) {
-    //             ids[i] = raffleInfo.prizeId; // Set the tokenId for each
-    //             amounts[i] = raffleInfo.prizeAmount; // Assuming each tokenId has an amount of 1
-    //         }
-
-    //         IERC1155(raffleInfo.prize).safeBatchTransferFrom(address(this), _winner, ids, amounts, "");
-    //     }
-        
-    //     if(raffleInfo.raffleType == RaffleType.ERC721) {
-    //         IERC721(raffleInfo.prize).safeTransferFrom(address(this), _winner, raffleInfo.prizeId, "");
-    //     } else if(raffleInfo.raffleType == RaffleType.ERC20) {
-    //         IERC20(raffleInfo.prize).transfer(_winner, raffleInfo.prizeAmount);
-    //     }
-    
-    // }
-
     function _transferPrizeToWinner(bytes32 _raffleId) internal {
         RaffleInfo memory raffleInfo = raffle[_raffleId];
 
-    if(raffleInfo.raffleType == RaffleType.ERC1155 && raffleInfo.prizeAmount == 1) {
-            IERC1155(raffleInfo.prize).safeTransferFrom(address(this), raffleInfo.winner, raffleInfo.prizeId, raffleInfo.prizeAmount, "");
-        } else if(raffleInfo.raffleType == RaffleType.ERC1155 && raffleInfo.prizeAmount > 1) {
-                uint256[] memory ids = new uint256[](raffleInfo.prizeAmount);
-                uint256[] memory amounts = new uint256[](raffleInfo.prizeAmount);
+        if(raffleInfo.raffleType == RaffleType.ERC1155 && raffleInfo.prizeAmount == 1) {
+                IERC1155(raffleInfo.prize).safeTransferFrom(address(this), raffleInfo.winner, raffleInfo.prizeId, raffleInfo.prizeAmount, "");
+            } else if(raffleInfo.raffleType == RaffleType.ERC1155 && raffleInfo.prizeAmount > 1) {
+                    uint256[] memory ids = new uint256[](raffleInfo.prizeAmount);
+                    uint256[] memory amounts = new uint256[](raffleInfo.prizeAmount);
 
-            for (uint256 i = 0; i < raffleInfo.prizeId; ++i) {
-                ids[i] = raffleInfo.prizeId; // Set the tokenId for each
-                amounts[i] = raffleInfo.prizeAmount; // Assuming each tokenId has an amount of 1
+                for (uint256 i = 0; i < raffleInfo.prizeId; ++i) {
+                    ids[i] = raffleInfo.prizeId; // Set the tokenId for each
+                    amounts[i] = raffleInfo.prizeAmount; // Assuming each tokenId has an amount of 1
+                }
+
+                IERC1155(raffleInfo.prize).safeBatchTransferFrom(address(this), raffleInfo.winner, ids, amounts, "");
             }
-
-            IERC1155(raffleInfo.prize).safeBatchTransferFrom(address(this), raffleInfo.winner, ids, amounts, "");
-        }
-        
-        if(raffleInfo.raffleType == RaffleType.ERC721) {
-            IERC721(raffleInfo.prize).safeTransferFrom(address(this), raffleInfo.winner, raffleInfo.prizeId, "");
-        } else if(raffleInfo.raffleType == RaffleType.ERC20) {
-            IERC20(raffleInfo.prize).transfer(raffleInfo.winner, raffleInfo.prizeAmount);
-        }
+            
+            if(raffleInfo.raffleType == RaffleType.ERC721) {
+                IERC721(raffleInfo.prize).safeTransferFrom(address(this), raffleInfo.winner, raffleInfo.prizeId, "");
+            } else if(raffleInfo.raffleType == RaffleType.ERC20) {
+                IERC20(raffleInfo.prize).transfer(raffleInfo.winner, raffleInfo.prizeAmount);
+            }
     }
 
     function _transferPrizeToRaffle(bytes32 _raffleId) internal {
         RaffleInfo memory raffleInfo = raffle[_raffleId];
 
         if(raffleInfo.status != Status.CREATED) {
-            revert InvalidRaffleState(raffleInfo.status);
+            revert Raffle__InvalidRaffleState(raffleInfo.status);
         }
 
         if(raffleInfo.raffleType == RaffleType.ERC1155 && raffleInfo.prizeAmount == 1) {
@@ -546,8 +514,12 @@ contract Raffle is Ownable, ReentrancyGuard, AutomationCompatibleInterface, VRFC
 
     }
 
-    /// helper func to change gasLimit for VRF
+    /**
+     * @dev Allows the owner to change the gas limit for the VRF callback
+     * @param _newGasLimit The new gas limit
+     */
     function changeGasLimit(uint32 _newGasLimit) external onlyOwner {
+        if(_newGasLimit < 0) {revert Raffle__InvalidGasLimit();} 
         gasLimit = _newGasLimit;
     }
     //////////////////////////////

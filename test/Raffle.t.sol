@@ -2,7 +2,7 @@
 pragma solidity 0.8.19;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {console2} from "forge-std/console2.sol";
+//import {console2} from "forge-std/console2.sol";
 import {Raffle} from "../src/Raffle.sol";
 import {ERC20Mock} from "@openzeppelin/mocks/ERC20Mock.sol";
 import {ERC721Mock} from "@openzeppelin/mocks/ERC721Mock.sol";
@@ -21,6 +21,10 @@ contract RaffleTest is Test {
     //address public employeerAddress;
     TokenTransferor public ccip;
 
+    address user1 = makeAddr("user1");
+    address user2 = makeAddr("user2");
+    address user3 = makeAddr("user3");
+
     /// Structs/enums from Raffle ///
     enum RaffleType {
         ERC1155,
@@ -29,12 +33,19 @@ contract RaffleTest is Test {
     }
 
     enum Status {
-        PENDING,
-        DRAWING,
-        ENDING
+        CREATED, // create raffle has been called
+        STARTED, // prize of raffle has been "staked" in contract
+        DRAWING, // upkeep is true, VRF is called
+        ENDED // winner was picked and prize was sent to winner
     }
 
+    // enum Status {
+    //     PENDING,
+    //     DRAWING,
+    //     ENDING
+    // }
 
+ 
     // mumbai vrf info 
     // 6612
     // 0x4b09e658ed251bcafeebbc69400383d49f344ace09b9576fe248bb02c003fe9f gaslane
@@ -43,40 +54,77 @@ contract RaffleTest is Test {
 
 
 function setUp() public {
-    mock20 = new ERC20Mock("ERC20Token", "COIN", address(this), 18);
+    // crete tokens
+    mock20 = new ERC20Mock("ERC20Token", "COIN", address(this), type(uint256).max);
     mock721 = new ERC721Mock("Name", "NFT");
     mock1155 = new ERC1155Mock("URI");
-    mockVRF = new VRFCoordinatorV2Mock(500, 5000);
     mockLink = new MockLinkToken();
-    raffleContract = new Raffle(6612, 0x4b09e658ed251bcafeebbc69400383d49f344ace09b9576fe248bb02c003fe9f, 500000, address(mockVRF));
+
+
+    // create vrf instance and subId
+    mockVRF = new VRFCoordinatorV2Mock(10, 1);
+    uint64 subId = mockVRF.createSubscription();
+
+    // create raffle instance
+    raffleContract = new Raffle(subId, bytes32(0), 500000, address(mockVRF));    
+
+    // add raffle as consumer and fund for vrf
+    mockVRF.addConsumer(subId, address(raffleContract));
+    mockVRF.fundSubscription(subId, 1000000000000000000);
+
+    vm.deal(user1, 1 ether);
+    vm.deal(user2, 1 ether);
+    vm.deal(user3, 1 ether);
 
 }
 
-//function createRaffle(RaffleType  _raffleType, uint256 _endTime, address _prize, uint256 _prizeId, uint256 _prizeAmount, uint256 _entryFee) external onlyOwner returns (bytes32 raffleId) {
-//uint256 public endTime = block.timestamp + 10 minutes;
-
-function createERC20RaffleRaffleType(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
-    return raffleContract.createRaffle(Raffle.RaffleType.ERC20, (block.timestamp + 10 minutes), address(mock20), 0, 20, 0);
+//////////////////////////////////////////
+/// Helper functions to create reffles ///
+//////////////////////////////////////////
+function createERC20RaffleType(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
+    return raffleId = raffleContract.createRaffle(Raffle.RaffleType.ERC20, (block.timestamp + 1 hours ), address(mock20), 0, 20, 0);
 }
 
-function createERC721RaffleRaffleType(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
-    return raffleContract.createRaffle(Raffle.RaffleType.ERC721, (block.timestamp + 10 minutes), address(mock721), 1, 1, 0);
+function createERC20RaffleTypeWithFee(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
+    return raffleId = raffleContract.createRaffle(Raffle.RaffleType.ERC20, (block.timestamp + 1 hours ), address(mock20), 0, 20, 1000000000000000000);
 }
 
-function createERC1155RaffleRaffleType(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
-    return raffleContract.createRaffle(Raffle.RaffleType.ERC1155, (block.timestamp + 10 minutes), address(mock1155), 1, 1, 0);
+function createERC20RaffleStaked(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
+    raffleId = raffleContract.createRaffle(Raffle.RaffleType.ERC20, (block.timestamp + 1 hours ), address(mock20), 0, 20, 0);
+    mock20.approve(address(raffleContract), 20);
+    raffleContract.stakePrize(raffleId);
+    return raffleId;
 }
 
-function createERC1155MultipleRaffleRaffleType(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
-    return raffleContract.createRaffle(Raffle.RaffleType.ERC1155, (block.timestamp + 10 minutes), address(mock1155), 1, 22, 0);
+function createERC20RaffleTypeWithFeeStaked(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
+    raffleId = raffleContract.createRaffle(Raffle.RaffleType.ERC20, (block.timestamp + 1 hours ), address(mock20), 0, 20, 1000000000000000000);
+    mock20.approve(address(raffleContract), 20);
+    raffleContract.stakePrize(raffleId);
+    return raffleId;
 }
+
+function createERC721RaffleType(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
+    return raffleContract.createRaffle(Raffle.RaffleType.ERC721, (block.timestamp + 1 hours ), address(mock721), 1, 1, 0);
+}
+
+function createERC1155RaffleType(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
+    return raffleContract.createRaffle(Raffle.RaffleType.ERC1155, (block.timestamp + 1 hours ), address(mock1155), 1, 1, 0);
+}
+
+function createERC1155MultipleRaffleType(/*RaffleType, uint256, address, uint256, uint256, uint256*/) public returns (bytes32 raffleId) {
+    return raffleContract.createRaffle(Raffle.RaffleType.ERC1155, (block.timestamp + 1 hours ), address(mock1155), 1, 22, 0);
+}
+
+//////////////////////////
+/// Test Create Raffle ///
+//////////////////////////
 
 function test_CreateRaffle() public {
-    bytes32 raffleId = raffleContract.createRaffle(Raffle.RaffleType.ERC20, (block.timestamp + 10 minutes), address(mock20), 0, 20, 0);
+    bytes32 raffleId = raffleContract.createRaffle(Raffle.RaffleType.ERC20, (block.timestamp + 1 hours ), address(mock20), 0, 20, 0);
 
     Raffle.RaffleInfo memory raffleInfo = raffleContract.getRaffleInfo(raffleId);
 
-    //assertEq(RaffleNoVrf.RaffleInfo.Status, 0);
+
     assertEq(raffleInfo.id, keccak256(abi.encodePacked(block.timestamp, address(this))));
     assertEq(raffleInfo.randomNumber, 0);
     assertEq(raffleInfo.randomNumberAvailable, false);
@@ -85,17 +133,18 @@ function test_CreateRaffle() public {
     assertEq(raffleInfo.prizeId, 0);
     assertEq(raffleInfo.prizeAmount, 20);
     assertEq(raffleInfo.entryFee, 0);
+   // assertEq(raffleInfo.status, Status.CREATED);
 }
 
 ////////////////////////////////
 /// Transfer To Raffle Tests ///
 ////////////////////////////////
-function test_transferPrizeToRaffleWithERC20() public {
+function test_stakePrizeToRaffleWithERC20() public {
     address raffleCreator = makeAddr("raffleCreator");
     deal(address(mock20), raffleCreator, 21);
     
     vm.startPrank(raffleCreator);
-    bytes32 raffleId = createERC20RaffleRaffleType();
+    bytes32 raffleId = createERC20RaffleType();
     mock20.approve(address(raffleContract), 20);
 
     raffleContract.stakePrize(raffleId);
@@ -105,12 +154,12 @@ function test_transferPrizeToRaffleWithERC20() public {
 
 }
 
-function test_transferPrizeToRaffleWithERC721() public {
+function test_stakePrizeToRaffleWithERC721() public {
     address raffleCreator = makeAddr("raffleCreator");
     mock721.mint(raffleCreator, 1);
     
     vm.startPrank(raffleCreator);
-    bytes32 raffleId = createERC721RaffleRaffleType();
+    bytes32 raffleId = createERC721RaffleType();
     mock721.setApprovalForAll(address(raffleContract), true);
 
     raffleContract.stakePrize(raffleId);
@@ -119,12 +168,12 @@ function test_transferPrizeToRaffleWithERC721() public {
     assertEq(mock721.balanceOf(raffleCreator), 0);
 }
 
-function test_transferPrizeToRaffleWithERC1155() public {
+function test_stakePrizeToRaffleWithERC1155() public {
     address raffleCreator = makeAddr("raffleCreator");
     mock1155.mint(raffleCreator, 1, 1, "");
     
     vm.startPrank(raffleCreator);
-    bytes32 raffleId = createERC1155RaffleRaffleType();
+    bytes32 raffleId = createERC1155RaffleType();
     mock1155.setApprovalForAll(address(raffleContract), true);
 
     raffleContract.stakePrize(raffleId);
@@ -133,100 +182,61 @@ function test_transferPrizeToRaffleWithERC1155() public {
     assertEq(mock1155.balanceOf(address(raffleCreator), 1), 0);
 }
 
-///////////////////////////////////////////////////
-/// Transfer From Raffle to Winner Tests No VRF ///
-///////////////////////////////////////////////////
+function test_stakePrizeToRaffleWithERC1155Batch() public {
+    address raffleCreator = makeAddr("raffleCreator");
+    mock1155.mint(raffleCreator, 1, 22, "");
+    assertEq(mock1155.balanceOf(raffleCreator, 1), 22);
 
-// function test_sendERC20ToWinner() public {
-//     address raffleCreator = makeAddr("raffleCreator");
-//     address winner = makeAddr("winner");
+    vm.startPrank(raffleCreator);
+    bytes32 raffleId = createERC1155MultipleRaffleType();
+    mock1155.setApprovalForAll(address(raffleContract), true);
 
-//     deal(address(mock20), raffleCreator, 21);
-    
-//     vm.startPrank(raffleCreator);
-//     bytes32 raffleId = createERC20RaffleRaffleType();
-//     mock20.approve(address(raffleContract), 20);
+    raffleContract.stakePrize(raffleId);
 
-//     raffleContract.stakePrize(raffleId);
+    assertEq(mock1155.balanceOf(address(raffleContract), 1), 22);
+    assertEq(mock1155.balanceOf(address(raffleCreator), 1), 0);
 
-//     assertEq(mock20.balanceOf(address(raffleContract)), 20);
-//     assertEq(mock20.balanceOf(raffleCreator), 1);
+}
 
-//     vm.warp(10 minutes + 1 seconds);
+///////////////////////////////
+/// Test Enter Raffle Funcs ///
+///////////////////////////////
 
-//     raffleContract._transferPrizeToWinnerTest(raffleId, winner);
+function test_enterRaffleERC20() public {
+    bytes32 raffleId = createERC20RaffleStaked();
 
-//     assertEq(mock20.balanceOf(address(raffleContract)), 0);
-//     assertEq(mock20.balanceOf(raffleCreator), 1);
-//     assertEq(mock20.balanceOf(winner), 20);
-// }
+    vm.prank(user1);
+    raffleContract.enterRaffle(raffleId);
 
-// function test_sendERC721ToWinner() public {
-//     address raffleCreator = makeAddr("raffleCreator");
-//     address winner = makeAddr("winner");
-//     mock721.mint(raffleCreator, 1);
-    
-//     vm.startPrank(raffleCreator);
-//     bytes32 raffleId = createERC721RaffleRaffleType();
-//     mock721.setApprovalForAll(address(raffleContract), true);
+    address[] memory entrantArray = raffleContract.getRaffleEntrantsArray(raffleId);
 
-//     raffleContract.stakePrize(raffleId);
+    assertEq(entrantArray[0], user1);
 
-//     assertEq(mock721.balanceOf(address(raffleContract)), 1);
-//     assertEq(mock721.balanceOf(raffleCreator), 0);
+}
 
-//     vm.warp(10 minutes + 1 seconds);
+function test_enterRaffleERC20WithFee() public {
+    bytes32 raffleId = createERC20RaffleTypeWithFeeStaked();
 
-//     raffleContract._transferPrizeToWinnerTest(raffleId, winner);
+    vm.prank(user1);
+    raffleContract.enterRaffle{value: 1 ether}(raffleId);
 
-//     assertEq(mock721.balanceOf(address(raffleContract)), 0);
-//     assertEq(mock721.balanceOf(winner), 1);
-// }
+    address[] memory entrantArray = raffleContract.getRaffleEntrantsArray(raffleId);
 
-// function test_sendERC1155ToWinner() public {
-//     address raffleCreator = makeAddr("raffleCreator");
-//     address winner = makeAddr("winner");
-//     mock1155.mint(raffleCreator, 1, 1, "");
-    
-//     vm.startPrank(raffleCreator);
-//     bytes32 raffleId = createERC1155RaffleRaffleType();
-//     mock1155.setApprovalForAll(address(raffleContract), true);
+    assertEq(entrantArray[0], user1);
+}
 
-//     raffleContract.stakePrize(raffleId);
+////////////////////////
+/// Test End Raffles ///
+////////////////////////
+// //@todo need to mock automation and vrf to test properly
+// function test_endRaffle() public {
+//     bytes32 raffleId = createERC20RaffleStaked();
 
-//     assertEq(mock1155.balanceOf(address(raffleContract), 1), 1);
-//     assertEq(mock1155.balanceOf(address(raffleCreator), 1), 0);
+//     uint256[] memory randomWords = new uint256[](1);
 
-//     vm.warp(10 minutes + 1 seconds);
 
-//     raffleContract._transferPrizeToWinnerTest(raffleId, winner);
+//     mockVRF.fulfillRandomWordsWithOverride(requestId, address(raffleContract), randomWords);
 
-//     assertEq(mock1155.balanceOf(address(raffleContract), 1), 0);
-//     assertEq(mock1155.balanceOf(address(raffleCreator), 1), 0);
-//     assertEq(mock1155.balanceOf(address(winner), 1), 1);
-// }
-
-// function test_sendMultiERC1155ToWinner() public {
-//     address raffleCreator = makeAddr("raffleCreator");
-//     address winner = makeAddr("winner");
-//     mock1155.mint(raffleCreator, 1, 30, "");
-    
-//     vm.startPrank(raffleCreator);
-//     bytes32 raffleId = createERC1155MultipleRaffleRaffleType();
-//     mock1155.setApprovalForAll(address(raffleContract), true);
-
-//     raffleContract.stakePrize(raffleId);
-
-//     assertEq(mock1155.balanceOf(address(raffleContract), 1), 22);
-//     assertEq(mock1155.balanceOf(address(raffleCreator), 1), 8);
-
-//     vm.warp(10 minutes + 1 seconds);
-
-//     raffleContract._transferPrizeToWinnerTest(raffleId, winner);
-
-//     assertEq(mock1155.balanceOf(address(raffleContract), 1), 0);
-//     assertEq(mock1155.balanceOf(address(raffleCreator), 1), 8);
-//     assertEq(mock1155.balanceOf(address(winner), 1), 22);
 // }
 
 ////////////////////////////////
@@ -250,4 +260,63 @@ function test_onlyOwnerCanChangeGasLimit() public {
 
     assertEq(raffleContract.getCurrentGasLimit(), 100000);
 }
+
+function test_fuzzOnlyOnwerCanWithdrawEthFees(address caller) public {
+    vm.assume (caller != address(0) && caller != raffleContract.owner());
+
+    vm.prank(caller);
+    vm.expectRevert("Ownable: caller is not the owner");
+    raffleContract.withdrawEthFees(caller);
+}
+
+function test_fuzzOnlyOnwerCanWithdrawErc721(address caller) public {
+    vm.assume (caller != address(0) && caller != raffleContract.owner());
+
+    vm.prank(caller);
+    vm.expectRevert("Ownable: caller is not the owner");
+    raffleContract.withdrawERC721(caller, address(mock721), 1);
+}
+
+function test_fuzzOnlyOwnerCanWithdrawErc20Fees(address caller) public {
+    vm.assume (caller != address(0) && caller != raffleContract.owner());
+
+    vm.prank(caller);
+    vm.expectRevert("Ownable: caller is not the owner");
+    raffleContract.withdrawERC20TokenFees(caller, address(mock20));
+}
+
+function test_fuzzOnlyOnwerCanWithdrawErc1155(address caller) public {
+    vm.assume (caller != address(0) && caller != raffleContract.owner());
+
+    vm.prank(caller);
+    vm.expectRevert("Ownable: caller is not the owner");
+    raffleContract.withdrawERC1155(caller, address(mock1155), 1, 1);
+}
+
+function test_fuzzOnlyOwnerCanAddUserToRaffle(address caller) public {
+    vm.assume (caller != address(0) && caller != raffleContract.owner());
+
+    bytes32 raffleId = createERC20RaffleType();
+
+    vm.prank(caller);
+    vm.expectRevert("Ownable: caller is not the owner");
+    raffleContract.addToRaffle(user1, raffleId);
+}
+
+function test_fuzzOwnerAddsUserToRaffle(address _usr) public {
+    vm.assume(_usr != address(0));
+    bytes32 raffleId = raffleContract.createRaffle(Raffle.RaffleType.ERC20, (block.timestamp + 1 hours ), address(mock20), 0, 20, 0);
+
+    mock20.approve(address(raffleContract), 20);
+    raffleContract.stakePrize(raffleId);
+
+    console2.logBytes32(raffleId);
+
+    raffleContract.addToRaffle(_usr, raffleId);
+
+    address[] memory entrantArray = raffleContract.getRaffleEntrantsArray(raffleId);
+
+    assertEq(entrantArray[0], _usr);
+}
+
 }

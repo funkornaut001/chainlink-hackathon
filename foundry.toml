@@ -23,6 +23,8 @@ fuji = "${AVALANCHE_FUJI_URL}"
 [etherscan]
 snowtrace = { key = "${SNOWTRACE_API}" }
 
+[fuzz]
+seed = '0x69'
 
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
